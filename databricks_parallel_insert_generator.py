@@ -5,40 +5,45 @@ from decimal import Decimal
 # CONFIGURATION
 # ================================
 schema = "silver"
-table = "silver_merchant"  # change this
+table = "silver_merchant"
 full_table_name = f"{schema}.{table}"
 
 # ================================
 # FETCH DATA
 # ================================
 df = spark.table(full_table_name)
-columns = df.columns
 
 # ================================
-# FUNCTION TO GENERATE INSERTS
+# FUNCTION TO GENERATE INSERTS (runs in parallel on workers)
 # ================================
-def generate_sql(partition):
-    for row in partition:
-        values = []
-        for val in row:
-            if val is None:
-                values.append("NULL")
-            elif isinstance(val, bool):
-                values.append(str(val).upper())
-            elif isinstance(val, str):
-                escaped = val.replace("'", "''")
-                values.append(f"'{escaped}'")
-            elif isinstance(val, (datetime, date)):
-                values.append(f"'{val}'")
-            elif isinstance(val, Decimal):
-                values.append(str(val))
-            else:
-                values.append(str(val))
-        cols = ", ".join(columns)
-        vals = ", ".join(values)
-        print(f"INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});")
+def row_to_insert(row):
+    values = []
+    for val in row:
+        if val is None:
+            values.append("NULL")
+        elif isinstance(val, bool):
+            values.append(str(val).upper())
+        elif isinstance(val, str):
+            escaped = val.replace("'", "''")
+            values.append(f"'{escaped}'")
+        elif isinstance(val, (datetime, date)):
+            values.append(f"'{val}'")
+        elif isinstance(val, Decimal):
+            values.append(str(val))
+        else:
+            values.append(str(val))
+
+    cols = ", ".join(row.__fields__)
+    vals = ", ".join(values)
+    return f"INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});"
 
 # ================================
-# EXECUTE IN PARALLEL
+# EXECUTE IN PARALLEL → COLLECT STRINGS ONLY
 # ================================
-df.rdd.foreachPartition(generate_sql)
+inserts = df.rdd.map(row_to_insert).collect()
+
+print(f"-- INSERT INTO script for {full_table_name}")
+print(f"-- Total rows: {len(inserts)}\n")
+
+for stmt in inserts:
+    print(stmt)
